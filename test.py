@@ -2,12 +2,16 @@ import pygame, math, numba, timeit
 
 pygame.init()
 
-win = pygame.display.set_mode((1300, 700))
+win = pygame.display.set_mode((1300, 700)) # set pygame window to 1300x700
+
 win_width = win.get_width()
 win_height = win.get_height()
 
+#RENDERLIST is cleared every frame
+RENDERLIST = [] # everything to be rendered gets appended to this list, then the redrawgamewindow decides how to blit/draw it to the window.
 
-RENDERLIST = []
+# sort by fourth element in sub-list, this is where distance is stored when an item is appended to RENDERLIST
+# TLDR depth sort
 def sort_by_i4(i):
     return i[3]
 
@@ -15,7 +19,7 @@ def sort_by_i4(i):
 class Player:
     def __init__(self, x, y, direction=0, fov=90):
         """
-        a class representing the player, the camera, ant the renderer
+        a class representing the player, the camera, and part of the renderer
         :param x: position along the x- in world spaceaxis
         :param y: position along the y-axis
         :param direction: direction in degrees
@@ -27,6 +31,7 @@ class Player:
     def move_forward(self):
         self.p.x += (math.cos(math.radians(self.d)) * 5)
         self.p.y += (math.sin(math.radians(self.d)) * 5)
+
     def move_backward(self):
         self.p.x -= (math.cos(math.radians(self.d)) * 5)
         self.p.y -= (math.sin(math.radians(self.d)) * 5)
@@ -42,15 +47,17 @@ class Player:
         self.d -= 90
 
 
+    #draws the player as if they were in a top-down world, showing their direction and position. Useful for debugging movement code
     def debug_draw(self):
         pygame.draw.rect(win, (0, 0, 255), (self.p.x - 5, self.p.y - 5, 10, 10))
         pygame.draw.line(win, (0, 0, 255), (self.p.x, self.p.y), (self.p.x + (math.cos(math.radians(self.d)) * 30), self.p.y + (math.sin(math.radians(self.d)) * 30)), 1)
 
-    # renderer+camera functions below
 
+    # renderer+camera functions below vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+
+    # takes an angle, in worldspace, and ives a position along the x axis it should appear in.
     def angle_to_screenspace(self, theta):
         """
-
         :param theta:
         :return: -1 if out of the fov. otherwise a value between 0 and 1
         """
@@ -74,20 +81,23 @@ class Player:
 
         distance = self.p.distance_to(point.p)
 
-        # "CULL THE WEAK!!!" - John Seed I think
+        # some code for culling, and also fixing an issue where the drawing would sometimes not occur when the angle 0 (worldspace) is visible
+        # Define far left and far right sides of the FOV
         L = round(self.d - (self.fov / 2))
         R = round(self.d + (self.fov / 2))
+        # ensure that all  angles are not larger than 360 degrees, this was part of the issue, as the object would sometimes be drawn off screen due to the angle being too large
         L %= 360
         R %= 360
         angle %= 360
 
-        if L < R:
-            if angle < L or angle > R:
+        if L < R: # this is the actual culling code. If the angle 0 (worldspace) is not visible, L will be smaller than R. 
+            if angle < L or angle > R: # angle will be between L and R if visible if on screen, so if not, return nothing
                 return
-#
+        
         elif angle < L and angle > R:
             return
 
+        # Just some code yoinked from my raycaster to determine the height of a thing on screen depending on its distance. There are way better ways of doing it, I will implement one in the future
         height = (35000 / distance) + 350
         y = round(-350 - height) + 1000
         height -= y
@@ -95,6 +105,7 @@ class Player:
 
         pygame.draw.rect(win, c, (draw_x, y, 10, height))
 
+    # Same wthing as draw_point(), but returns the data instead of drawing it.(width is omitted as it is considered constant for a point regardless of distance)
     def drawn_point(self, point):
         angle = pygame.Vector2(0, 0).angle_to((self.p.x - point.p.x, self.p.y - point.p.y)) + 180
         #pygame.draw.line(win, (0, 0, 255), (self.p.x, self.p.y), (self.p.x + 500, self.p.y), 1)
@@ -126,7 +137,7 @@ class Player:
 
 
 class Point:
-    points = []
+    points = [] # a list of all points, is looped over in redrawgamewindow() and the info of each 
     def __init__(self, x, y):
         """
         A base class for anything that needs to be represented by a point in space.
@@ -141,13 +152,13 @@ class Point:
 
         Point.points.append(self)
 
-    def begone(self):
-        try:
+    def begone(self): # youtube friendly version of kill
+        try: # required a try:except block as for some reason if there was only one point in existence it would not be in the list? may have been fixed, I'll have to test it out later
             Point.points.pop(self.lpos)
         except Exception:
             Point.points = []
 
-    def debug_draw(self, scale=3):
+    def debug_draw(self, scale=3): # same top-down view as the player debug draw
         pygame.draw.rect(win, self.col, (self.p.x - (scale * 0.5), self.p.y - (scale * 0.5), scale, scale))
 
     def get_angle(self, pos):
@@ -157,15 +168,14 @@ class Point:
         return angle
 
 
-class Tree:
-    trees = []
+class Tree: # esentially a point with a sprite that scales vertically and horizontally
+    trees = [] # like Point.points, but for trees and appends the direction as well for the depth sort
     def __init__(self, x, y):
         self.x = x
         self.y = y
-        self.p = pygame.Vector2(x, y)
-        self.img = pygame.image.load(("assets\\Tree1.png")).convert()
-        self.hp = 100
-        self.direction = 0
+        self.p = pygame.Vector2(x, y) # where it is on the world (remember, this is 2.5D so no z)
+        self.img = pygame.image.load(("assets\\Tree1.png")).convert() # .convert() is to make resizing and drawing faster
+        self.direction = 0 # For if I try to change the sprite depending on the direction from the sprite to the player, similar to games like DOOM
         #self.rect = pygame.rect.Rect(self.x, self.y, self.img.get_width(), self.img.get_height())
         Tree.trees.append(self)
 
@@ -173,18 +183,18 @@ class Tree:
         angle = pygame.Vector2(0, 0).angle_to((pl.p.x - self.p.x, pl.p.y - self.p.y)) + 180
         #pygame.draw.line(win, (0, 0, 255), (pl.p.x, pl.p.y), (self.p.x + 500, self.p.y), 1)
 
-        normalised_x = pl.angle_to_screenspace(angle)
+        normalised_x = pl.angle_to_screenspace(angle) # uses the same function as a Point to get its screenspace position from its angle
         draw_x = normalised_x * win_width
 
         distance = pl.p.distance_to(self.p)
 
         # ik it's wierd but this is just how I kept the aspect ratio of the sprite constant
-        A = (35000 / (distance + 1)) + 350 # you's think the 350 can be simplified out, but i guess i'm too stupid to figure it out
+        A = (35000 / (distance + 1)) + 350 # you'd think the 350 can be simplified out, but i guess i'm too stupid to figure it out
         B = round(-350 - A) + 1000
         A -= B
         width = A
 
-        # "CULL THE WEAK!!!" - John Seed I think (this is culling in case you couldn't tell)
+        # same culling code as Point, should reformat into a function as it's repeated multiple times
         L = round(pl.d - (pl.fov / 2))
         R = round(pl.d + (pl.fov / 2))
         L %= 360
@@ -210,7 +220,7 @@ class Tree:
             # sprite draw
             i_copy = self.img.copy()
             im = pygame.transform.scale(i_copy, (dimensions[3], dimensions[2]))
-            im.set_colorkey((255, 255, 255))
+            im.set_colorkey((255, 255, 255)) # enables tranparency
             x = dimensions[0]
             y = dimensions[1]
             RENDERLIST.append((im, x - (im.get_width() / 2), y, dimensions[4]))
@@ -218,13 +228,13 @@ class Tree:
             #pygame.draw.rect(win, (255, 0, 0), (x, y + im.get_height(), 10, 10))
             origin = pygame.Vector2(x, y + im.get_height())
             direction_vect_visualisation = pygame.Vector2(math.cos(math.radians(self.direction - pl.d)), math.sin(math.radians(self.direction - pl.d)))
-            pygame.draw.line(win, (255, 0, 0), origin, origin + (direction_vect_visualisation * 50), 3)
+            pygame.draw.line(win, (255, 0, 0), origin, origin + (direction_vect_visualisation * 50), 3) # to help debugging when changing sprite depending on direction
         except Exception as e:
             if e.__str__() != "'NoneType' object is not subscriptable":
                 print(e)
 
 
-class Box:
+class Box: # This is a sprite stack, a bunch of rotated sprites that look like a 3D object on the ground
     boxes = []
     # hit detection can be done in draw(), as z may be distance from player view plane, but it's also culled so must be within sight and close to view plane to have a low z.
     def __init__(self, x, y, directory_to_sprite_stack="assets/prism sprite stack test", amount_of_sprites=7):
@@ -232,10 +242,7 @@ class Box:
         self.y = y
         self.p = pygame.Vector2(x, y)
         self.direction = 0
-        # for sprite stacks
         images_temp = []
-        # here I sit, broken-hearted
-        # came to use list comprehension statements, but only farted
         for i in range(amount_of_sprites):
             images_temp.append(pygame.image.load(f"{directory_to_sprite_stack}/layer {i + 1}.png").convert())
             print(f"{directory_to_sprite_stack}/layer {i + 1}")
@@ -264,7 +271,7 @@ class Box:
         A -= B
         width = A
 
-        # "CULL THE WEAK!!!" - John Seed I think (this is culling in case you couldn't tell)
+        # same culling code as before, I really need to make this a function
         L = round(pl.d - (pl.fov / 2))
         R = round(pl.d + (pl.fov / 2))
         L %= 360
@@ -284,7 +291,7 @@ class Box:
 
         return [draw_x, y, height, width, distance]
 
-    @numba.jit()
+    @numba.jit() # not sure how much numba is helping here
     def draw(self):
         dimensions = self.get_view_dimensions()
         if type(dimensions) == type(None):
@@ -336,7 +343,7 @@ class Box:
 #        #direction_vect_visualisation = pygame.Vector2(math.cos(math.radians(direction_to_rotate_images)), math.sin(math.radians(direction_to_rotate_images)))
 #        #pygame.draw.line(win, (255, 0, 0), origin, origin + (direction_vect_visualisation * 50), 3)
 
-        # 3rd element is theone it's sorting by, so it must be z
+        # 3rd element is the one it's sorting by, so it must be z
         RENDERLIST.append((images_todraw, 0, 0, z))
 
 
@@ -355,6 +362,7 @@ def redrawgamewindow(p1=0, p2=0):
     # 2.5D world render
     pygame.draw.rect(win, (0, 255, 0), (0, win_height / 2, win_width, win_height / 2))
     pygame.draw.rect(win, (70, 120, 255), (0, 0, win_width, win_height / 2))
+    # loop over each object and put it's data into RENDERLIST
     if len(Point.points) > 0:
         for p in Point.points:
             pl.draw_point(p)
@@ -364,6 +372,7 @@ def redrawgamewindow(p1=0, p2=0):
     if len(Box.boxes) > 0:
         for b in Box.boxes:
             b.draw()
+    # sore RENDERLIST by distance then draw everything to window
     if len(RENDERLIST) > 0:
         RENDERLIST.sort(key=sort_by_i4, reverse=True)
         for i in RENDERLIST:
@@ -379,11 +388,10 @@ def redrawgamewindow(p1=0, p2=0):
     # window update
     pygame.display.update()
 
-    # render cleanup
+    # clear RENDERLIST
     RENDERLIST.clear()
 
     # debug
-
     #pl.debug_draw()
 
 
@@ -392,7 +400,8 @@ run = True
 pointing = False
 clock = pygame.time.Clock()
 
-#for i in range(50): # for testing performance. Small size of sprites is like an automatic lod for distant objects, even 100 is super fast from far away. but up close it gets very slow.
+# for testing performance. Small size of sprites is like an automatic lod for distant objects, even 100 is super fast from far away. but up close it gets very slow.
+#for i in range(50):
 #    Box(100 + i // 50, 100 + i // 50)
 Box(100, 100)
 
@@ -400,8 +409,8 @@ mouse_pos = pygame.mouse.get_pos()
 mouse_x = mouse_pos[0]
 mouse_y = mouse_pos[1]
 
-del_cooldown = False
-looking = False
+del_cooldown = False # cooldown on deleting points added by clicking, there's a cooldown so you can't delete 60 each second
+looking = False # if looking, the players mouse movements are interpreted as looking around.
 while run:
     clock.tick(60)
 
@@ -439,13 +448,14 @@ while run:
                 pointing = False
 
         if event.type == pygame.KEYUP and event.dict["unicode"] == "e":
-            looking = not looking
+            looking = not looking # use e to toggle between looking and placing points
 
     keys = pygame.key.get_pressed()
 #input ------------------------------------------------------------------------------------------#
     if keys[pygame.K_ESCAPE]:
         run = False
 
+    # actually deleting points
     if keys[pygame.K_DELETE] and del_cooldown and bool(len(Point.points)):
         Point.points[-1].begone()
         del_cooldown = False
@@ -453,6 +463,7 @@ while run:
         del_cooldown = False
     else: del_cooldown = True
 
+    # moving player
     if keys[pygame.K_w]:
         pl.move_forward()
     if keys[pygame.K_a]:
@@ -462,6 +473,7 @@ while run:
     if keys[pygame.K_d]:
         pl.move_right()
 
+    # looking around
     if keys[pygame.K_LEFT]:
         pl.d -= 5
     if keys[pygame.K_RIGHT]:
@@ -471,9 +483,11 @@ while run:
     elif pl.d < 0:
         pl.d += 360
 
+    # place a tree at mouse position if space is pressed
     if keys[pygame.K_SPACE]:
         Tree(mouse_x, mouse_y)
 
+    # reposition the mouse if the player is looking so they don't have to stop looking to reset the mouse position
     if looking:
         pygame.mouse.set_pos(win_width / 2, win_height / 2)
 
