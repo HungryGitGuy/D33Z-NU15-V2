@@ -6,7 +6,7 @@ I reccomend running test.py, it's the most advanced version.
 
 This is just a demo of a renderer I made, its the most complex project i've ever made without using any tutorials.
 
-I originally wrote a big, in depth and detailed descrition of this project but my browser freaked out and deleted it without saving. "Maybe I'll come back to it later, but I'm too annoyed to do it now" - annoyed me, a few months ago.
+"I originally wrote a big, in depth and detailed descrition of this project but my browser freaked out and deleted it without saving. Maybe I'll come back to it later, but I'm too annoyed to do it now" - annoyed me, a few months ago.
 
 I personally call it a reverse-raycaster, as it uses math similar to a raycaster, but doesn't cast rays. 
 
